@@ -6,6 +6,9 @@ const HeroRoutes = require('./routes/heroRoutes')
 const AuthRoutes = require('./routes/authRotes')
 const Joi = require('joi')
 
+const Postgres = require('./db/strategies/postgres/postgres')
+const userSchema = require('./db/strategies/postgres/schemas/userSchema')
+
 const HapiSwagger = require('hapi-swagger')
 const Vision = require('vision')
 const Inert = require('inert')
@@ -23,6 +26,10 @@ function mapRoutes(instance, methods) {
 async function main() {
     const connection = MongoDb.connect()
     const context = new Context(new MongoDb(connection, HeroSchema))
+
+    const connectionPostgres = await Postgres.connect()
+    const model = await Postgres.defineModel(connectionPostgres, userSchema)
+    const contextPostgres = new Context(new Postgres(connectionPostgres, model))
 
     const swaggerOptions = {
         info: {
@@ -46,7 +53,14 @@ async function main() {
         // options: {
         //     expiresIn: 20
         // }
-        validate: (data, request) => {
+        validate: async (data, request) => {
+            const [result] = await contextPostgres.read({
+                username: data.username.toLowerCase(),
+                id: data.id
+            })
+
+            if (!result) return { isValid: false }
+
             return { isValid: true }
         }
     })
@@ -55,9 +69,9 @@ async function main() {
     app.validator(Joi)
 
     app.route([
-            ...mapRoutes(new HeroRoutes(context), HeroRoutes.methods()),
-            ...mapRoutes(new AuthRoutes(JWT_SECRET), AuthRoutes.methods())
-        ])
+        ...mapRoutes(new HeroRoutes(context), HeroRoutes.methods()),
+        ...mapRoutes(new AuthRoutes(JWT_SECRET, contextPostgres), AuthRoutes.methods())
+    ])
 
     await app.start()
     console.log("Servidor is Running in port: ", app.info.port)
